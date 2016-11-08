@@ -1,26 +1,12 @@
 # Nest module
 # Mitch Schwenk <mitch@yombo.net>, 2016.
 
-msgctxt "module.nest"
-msgid "heat 1"
-msgstr "Heat Stage 1"
+
 
 msgctxt "module.nest"
-msgid "heat 2"
-msgstr "Heat Stage 2"
+msgid "Thermostat is {mode}."
+msgstr ""
 
 msgctxt "module.nest"
-msgid "heat 3"
-msgstr "Heat Stage 3"
-
-msgctxt "module.nest"
-msgid "cool 1"
-msgstr "Cool Stage 1"
-
-msgctxt "module.nest"
-msgid "cool 2"
-msgstr "Cool Stage 2"
-
-msgctxt "module.nest"
-msgid "cool 3"
-msgstr "Cool Stage 3"
+msgid "Thermostat is set to {mode}, is set to {set_temp}, and is currently {state}. The fan is {fan_state}."
+msgstr ""

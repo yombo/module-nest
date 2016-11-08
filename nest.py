@@ -19,6 +19,7 @@ try:  # Prefer simplejson if installed, otherwise json will work swell.
     import simplejson as json
 except ImportError:
     import json
+import math
 
 # Import twisted libraries
 from twisted.internet.defer import inlineCallbacks, returnValue
@@ -46,7 +47,7 @@ class Nest(YomboModule):
         # self.password = self._ModuleVariables['password'][0]['value']
 
         self.devices = {}
-        self.temp_display = self.set('misc', 'temp_display', 'f')
+        self.tempurature_display = self.set('misc', 'tempurature_display', 'f')
 
 
         devices = self._GetDevices()
@@ -57,6 +58,15 @@ class Nest(YomboModule):
                             id=device.device_variables['nest_id'][0]['value'],
                             reason=results)
                 del self.devices[device_id]
+
+    def _start_(self):
+        """
+        Sets up a period call to get nest thermostat status.
+
+        :return:
+        """
+        self.period_status_loop = LoopingCall(self.period_status)
+        self.period_status_loop.start(300)
 
     def _module_devicetypes_(self, **kwargs):
         """
@@ -102,6 +112,7 @@ class Nest(YomboModule):
         content = yield treq.content(response)
         content = json.loads(content)  # convert from json to dictionary
 
+        self.devices[device.device_id]['nest_number'] = device.device_variables['nest_number'][0]['value']
         self.devices[device.device_id]['nest_serial'] = device.device_variables['nest_serial'][0]['value']
         self.devices[device.device_id]['transport'] = content['urls']['transport_url']
         self.devices[device.device_id]['access_token'] = content['access_token']
@@ -110,7 +121,18 @@ class Nest(YomboModule):
         returnValue(True)
 
     @inlineCallbacks
-    def get_status(self, device_id):
+    def period_status(self):
+        """
+        Periodically asks the NEST api for curent status of the device.
+
+        :return:
+        """
+        for device_id, device in self.devices.iteritems():
+            status = yield self.retrieve_status(device_id)
+            self.save_status(device_id, status)
+
+    @inlineCallbacks
+    def retrieve_status(self, device_id):
         transport = self.device[device_id]['transport']
         userid = self.device[device_id]['userid']
         access_token = self.device[device_id]['access_token']
@@ -137,41 +159,136 @@ class Nest(YomboModule):
         status.update(device)
         status.udpate(structure)
 
-        stats_label = self.devices[device.device_id]['statistics_label']
+        returnValue(status)
+
+    def save_status(self, device_id, status):
+        stats_label = self.devices[device_id]['statistics_label']
 
         #lets calculate if we are off, cool 1, cool 2, cool 3, heat 1, heat 2, heat 3
-        if shared['hvac_fan_state'] is True:
-            fan_state = 1
+        if status['hvac_fan_state'] is True:
+            fan_state = 'on'
+            fan_state_value = 1
         else:
-            fan_state = 0
+            fan_state = 'Off'
+            fan_state_value = 0
 
-        if shared['hvac_heat_x3_state'] is True:
-            fan_state = 1
-            mode = 'heat 3'
-        elif shared['hvac_heat_x2_state'] is True:
-            fan_state = 1
-            mode = 'heat 2'
-        elif shared['hvac_heater_state'] is True:
-            fan_state = 1
-            mode = 'heat 1'
-        elif shared['hvac_cool_x3_state'] is True:
-            fan_state = 1
-            mode = 'cool 3'
-        elif shared['hvac_cool_x2_state'] is True:
-            fan_state = 1
-            mode = 'cool 2'
-        elif shared['hvac_ac_state'] is True:
-            fan_state = 1
-            mode = 'cool 1'
+        if status['hvac_heat_x3_state'] is True:
+            fan_state = 'On'
+            fan_state_value = 1
+            run_mode = 'Heat stage 3'
+            run_mode_value = 3
+        elif status['hvac_heat_x2_state'] is True:
+            fan_state = 'On'
+            fan_state_value = 1
+            run_mode = 'Heat stage 2'
+            run_mode_value = 2
+        elif status['hvac_heater_state'] is True:
+            fan_state = 'On'
+            fan_state_value = 1
+            run_mode = 'Heat stage 1'
+            run_mode_value = 1
+        elif status['hvac_cool_x3_state'] is True:
+            fan_state = 'On'
+            fan_state_value = 1
+            run_mode = 'Cool stage 3'
+            run_mode_value = -3
+        elif status['hvac_cool_x2_state'] is True:
+            fan_state = 'On'
+            fan_state_value = 1
+            run_mode = 'Cool stage 2'
+            run_mode_value = -2
+        elif status['hvac_ac_state'] is True:
+            fan_state = 'On'
+            fan_state_value = 1
+            run_mode = 'Cool stage 1'
+            run_mode_value = -1
         else:
-            mode = 'off'
+            run_mode = 'Off'
+            run_mode_value = 0
 
-        self._Statistics.averages(stats_label + ".current_temp", shared['current_temperature'], bucket_time=5)
-        self._Statistics.averages(stats_label + ".mode", mode, bucket_time=5)
-        self._Statistics.averages(stats_label + ".fan_state", fan_state, bucket_time=5)
+        self.device[device_id]['status']['y_fan_state'] = fan_state
+        self.device[device_id]['status']['y_run_mode'] = run_mode
 
-        self.devices[device_id]['status'] = status
+        # Save statistics for long term.
+        self._Statistics.averages(stats_label + ".set_temperature", status['target_temperature'], bucket_time=5)
+        self._Statistics.averages(stats_label + ".current_temp", status['current_temperature'], bucket_time=5)
+        self._Statistics.averages(stats_label + ".current_humidity", status['current_humidity'], bucket_time=5)
+        self._Statistics.datapoint(stats_label + ".run_mode", run_mode_value)
+        self._Statistics.datapoint(stats_label + ".fan_state", fan_state)  # on, off
+        self._Statistics.datapoint(stats_label + ".mode", status['target_temperature_type'])  # cool, heat, off
 
+        if self.tempurature_display == 'f':
+            set_temp = unit_converters['c_f'](status['target_temperature_type'])
+        else:
+            set_temp = status['target_temperature_type']
+
+        device_status = {
+            'human_status': _('module.nest',"Thermostat is set to {mode}, is set to {set_temp}, and is currently {state}. The fan is {fan_state}.".format(
+                mode=_('common', status['target_temperature_type'].title()),
+                set_temp=_('common', set_temp),
+                state=_('common', run_mode.title()),
+                fan_state=_('common', fan_state)
+            )),
+            'machine_status': run_mode_value,
+            'machine_status_extra': {
+                                    'mode': status['target_temperature_type'],
+                                    'current_temperature': status['current_temperature'],
+                                    'fan_state': fan_state_value,
+                                    'set_temperature': status['target_temperature'],
+                                    'current_humidity': status['current_humidity'],
+            },
+            'source': self,
+        }
+
+        self.device[device_id].set_status(**device_status)  # set and send the status of the thermostat
+
+        # Tell the rest of the system about the current state of a particular thermostat
+        starter = 'thermostat.%s.' % self.devices[device_id]['nest_number']
+        self._States.set(starter + "features", ['humidity', 'temperature', 'set_temperature', 'fan_state', 'run_mode'])
+        self._States.set(starter + "humidity", status['current_humidity'])
+        self._States.set(starter + "set_temperature", status['target_temperature'])
+        self._States.set(starter + "temperature", status['current_temperature'])
+        self._States.set(starter + "run_mode", run_mode_value)
+        self._States.set(starter + "fan_state", fan_state)
+
+        # This is a litle complex because there could be multiple nest thermostats. We average them together
+        humidities = []
+        temps = []
+        set_temps = []
+        run_modes = []
+        fan_states = []
+
+        for device_id, data in self.devices.iteritems():
+            status = self.device[device_id]['status']
+            temps.append(status['current_temperature'])
+            set_temps.append(status['target_temperature'])
+            humidities.append(status['current_humidity'])
+            run_modes.append(status['y_run_mode'])
+            fan_states.append(status['y_fan_state'])
+
+        count = len(self.devices)
+
+        calc = sum(humidities) / float(count)
+        avg_humidity = math.ceil(calc) if calc > 0 else math.floor(calc)
+        calc = sum(temps) / float(count)
+        avg_temp = math.ceil(calc) if calc > 0 else math.floor(calc)
+        calc = sum(set_temps) / float(count)
+        avg_set_temp = math.ceil(calc) if calc > 0 else math.floor(calc)
+        calc = sum(run_modes) / float(count)
+        avg_run_mode = math.ceil(calc) if calc > 0 else math.floor(calc)
+        calc = sum(fan_states) / float(count)
+        avg_fan_state = math.ceil(calc) if calc > 0 else math.floor(calc)
+
+        master = self.devices[device_id]['master']
+        # Tell the rest of the system about the curent averages.
+        self._States.set("thermostat.average.features", ['humidity', 'temperature', 'set_temperature', 'fan_state', 'run_mode'])
+        self._States.set("thermostat.average.humidity", avg_humidity)
+        self._States.set("thermostat.average.set_temperature", avg_set_temp)
+        self._States.set("thermostat.average.temperature", avg_temp)
+        self._States.set("thermostat.average.run_mode", avg_run_mode)
+        self._States.set("thermostat.average.fan_state", avg_fan_state)
+
+    @inlineCallbacks
     def _device_command_(self, **kwargs):
         """
         Received a request to do perform a command for a device.
@@ -179,7 +296,7 @@ class Nest(YomboModule):
         :param kwags: Contains 'device' and 'command'.
         :return: None
         """
-        logger.info("X10 API received device_command: {kwargs}", kwargs=kwargs)
+        logger.info("NEST received device_command: {kwargs}", kwargs=kwargs)
         device = kwargs['device']
         request_id = kwargs['request_id']
         device.command_received(request_id)
@@ -192,10 +309,31 @@ class Nest(YomboModule):
                     device_id=device.device_id)
             return  # not meant for us.
 
+        results = {}
+        if command.machine_label in ('cool', 'heat', 'off'):
+            device.command_pending(request_id)
+            results = yield self.set_mode(device.device_id, command.machine_label, request_id)
+        elif command.machine_label == 'set_temp':
+            if 'target_temp' not in kwargs:
+                logger.warn("NEST Requires 'target_temp' in kwargs of do_command request.")
+                return
+            device.command_pending(request_id)
+            results = yield self.set_temp(device.device_id, kwargs['target_temp'], request_id)
+        else:
+            logger.warn("NEST recieved unknown command: {command}", command=command.machine_label)
+            return
+
+        status = yield self.retrieve_status(device.device_id)
+        if status is not False:
+            self.save_status(device.device_id, status)
+            device.command_done(request_id)
+        else:
+            device.command_failed(request_id)
+
     @inlineCallbacks
     def api_post(self, device_id, type, data):
         transport = self.device[device_id]['transport']
-        serial = self.devices[device.device_id]['nest_serial']
+        serial = self.devices[device_id]['nest_serial']
         userid = self.device[device_id]['userid']
         access_token = self.device[device_id]['access_token']
 
@@ -214,12 +352,17 @@ class Nest(YomboModule):
             temp = unit_converters['f_c'](temp)
 
         request_data = '{"target_change_pending":true,"target_temperature":' + '%0.1f' % temp + '}'
-        response = yield self.api_post(device_id, 'shared', request_data)
+        response = yield self.api_post(device_id, 'shared')
 
     @inlineCallbacks
-    def set_fan(self, state):
+    def set_fan(self, device_id, state):
 
         request_data = '{"fan_mode":"' + str(state) + '"}'
         response = yield self.api_post(device_id, 'device', request_data)
 
+    @inlineCallbacks
+    def set_mode(self, device_id, state):
+
+        request_data = '{"target_temperature_type":"' + str(state) + '"}'
+        response = yield self.api_post(device_id, 'shared', request_data)
 

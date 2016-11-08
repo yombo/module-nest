@@ -51,6 +51,7 @@ def show_serials(username, password):
     content = yield treq.content(response)
     content = json.loads(content)  # convert from json to dictionary
 
+    # print content
     shared = content['shared']
     print "\nEnter this desired serial string into the device configuration:"
     if len(shared):
