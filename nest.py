@@ -48,7 +48,7 @@ class Nest(YomboModule):
 
         self.devices = {}
         self.tempurature_display = self.set('misc', 'tempurature_display', 'f')
-
+        self.pending_requests = {}  # track pending requests here.
 
         devices = self._GetDevices()
         for device_id, device in devices.iteritems():
@@ -223,9 +223,10 @@ class Nest(YomboModule):
             set_temp = status['target_temperature_type']
 
         device_status = {
-            'human_status': _('module.nest',"Thermostat is set to {mode}, is set to {set_temp}, and is currently {state}. The fan is {fan_state}.".format(
+            'human_status': _('module.nest',"Thermostat is set to {mode}, is set to {set_temp}°{temp_scale}, and is currently {state}. The fan is {fan_state}.".format(
                 mode=_('common', status['target_temperature_type'].title()),
                 set_temp=_('common', set_temp),
+                temp_scale=_('common.temperatures', set_temp),
                 state=_('common', run_mode.title()),
                 fan_state=_('common', fan_state)
             )),
@@ -288,6 +289,19 @@ class Nest(YomboModule):
         self._States.set("thermostat.average.run_mode", avg_run_mode)
         self._States.set("thermostat.average.fan_state", avg_fan_state)
 
+    def device_command_send_pending(self, request_id):
+        self.pending_requests[request_id]['device'].device_command_pending(request_id)
+        self.pending_requests[request_id]['nest_pending_callback'] = \
+            reactor.callLater(15, self.device_command_cancel, request_id)
+
+    def device_command_cancel(self, request_id):
+        if self.pending_requests[request_id]['nest_pending_callback'].active():
+            self.pending_requests[request_id]['nest_pending_callback'].cancel()
+
+        self.pending_requests[request_id]['device'].device_command_failed(request_id,
+            message=_('module.nest', 'NEST timed out, check network connection.'))
+        self.pending_requests[request_id]['nest_running'] = False
+
     @inlineCallbacks
     def _device_command_(self, **kwargs):
         """
@@ -299,15 +313,21 @@ class Nest(YomboModule):
         logger.info("NEST received device_command: {kwargs}", kwargs=kwargs)
         device = kwargs['device']
         request_id = kwargs['request_id']
-        device.command_received(request_id)
+        self.pending_requests[request_id] = kwargs
+        self.pending_requests[request_id]['nest_running'] = True
+
         command = kwargs['command']
 
         logger.info("Testing if Nest module has information for device_id: {device_id}",
                 device_id=device.device_id)
         if device.device_id not in self.devices:
-            logger.info("Skipping _device_command_ call since '{device_id}' isn't valide.",
+            logger.info("Skipping _device_command_ call since '{device_id}' isn't valid.",
                     device_id=device.device_id)
-            return  # not meant for us.
+            returnValue()  # not meant for us.
+
+        device.device_command_received(request_id, message=_('module.nest', 'Handled by NEST module.'))
+        self.pending_requests[request_id]['nest_pending_callback'] = \
+            reactor.callLater(1, self.device_command_send_pending, request_id)
 
         results = {}
         if command.machine_label in ('cool', 'heat', 'off'):
@@ -316,19 +336,27 @@ class Nest(YomboModule):
         elif command.machine_label == 'set_temp':
             if 'target_temp' not in kwargs:
                 logger.warn("NEST Requires 'target_temp' in kwargs of do_command request.")
-                return
-            device.command_pending(request_id)
-            results = yield self.set_temp(device.device_id, kwargs['target_temp'], request_id)
+                self.device_command_cancel(request_id)
+            else:
+                device.command_pending(request_id)
+                results = yield self.set_temp(device.device_id, kwargs['target_temp'], request_id)
         else:
-            logger.warn("NEST recieved unknown command: {command}", command=command.machine_label)
-            return
+            logger.warn("NEST received unknown command: {command}", command=command.machine_label)
+            self.device_command_cancel(request_id)
 
-        status = yield self.retrieve_status(device.device_id)
-        if status is not False:
-            self.save_status(device.device_id, status)
-            device.command_done(request_id)
-        else:
-            device.command_failed(request_id)
+        if self.pending_requests[request_id]['nest_running'] is True:
+            status = yield self.retrieve_status(device.device_id)
+
+        if self.pending_requests[request_id]['nest_running'] is True:
+            if status is not False:
+                self.save_status(device.device_id, status)
+                device.command_done(request_id)
+            else:
+                device.command_failed(request_id, message=_('module.nest', "NEST timed out, check network connection."))
+
+        if self.pending_requests[request_id]['nest_pending_callback'].active():
+            self.pending_requests[request_id]['nest_pending_callback'].cancel()
+        del self.pending_requests[request_id]
 
     @inlineCallbacks
     def api_post(self, device_id, type, data):

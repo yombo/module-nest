@@ -1,12 +1,27 @@
 # Nest module
 # Mitch Schwenk <mitch@yombo.net>, 2016.
 
-
-
+#. TRANSLATORS: Provides a complete status of the HVAC system. Mode is cool, heat, auto, off.
 msgctxt "module.nest"
-msgid "Thermostat is {mode}."
+msgid "Thermostat is set to {mode}, is set to {set_temp}°{temp_scale}, and is currently {state}. The fan is {fan_state}."
 msgstr ""
 
+#. TRANSLATORS: This is shown when an internation connection is offline and cannot reach NEST servers.
 msgctxt "module.nest"
-msgid "Thermostat is set to {mode}, is set to {set_temp}, and is currently {state}. The fan is {fan_state}."
+msgid "NEST timed out, check network connection."
+msgstr ""
+
+#. TRANSLATORS: Provided as feedback on what module is handling a request to process a NEST command.
+msgctxt "module.nest"
+msgid "Handled by NEST module."
+msgstr ""
+
+#. TRANSLATORS:
+msgctxt "module.nest"
+msgid ""
+msgstr ""
+
+#. TRANSLATORS:
+msgctxt "module.nest"
+msgid ""
 msgstr ""
