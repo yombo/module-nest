@@ -37,6 +37,11 @@ def show_serials(username, password):
 
     content = json.loads(content)  # convert from json to dictionary
 
+    if 'error' in content:
+        print
+        print "ERROR: %s" % content['error_description']
+        print
+        return
     transport = content['urls']['transport_url']
     access_token = content['access_token']
     userid = content['userid']
@@ -69,7 +74,7 @@ def command_parser():
    return parser
 
 def help():
-    print "syntax: list.py username password"
+    print "syntax: lookup.py username 'password'"
     print
     print "examples:"
     print "    list.py joe@user.com swordfish"
@@ -81,7 +86,7 @@ def main(reactor, *args):
 
     if (len(args)<2) or (args[0]=="help"):
         help()
-        reactor.stop()
+        return
 
     username = args[0]
     password = args[1]
