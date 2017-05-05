@@ -1,0 +1,69 @@
+{% extends "lib/webinterface/fragments/layout.tpl" %}
+{% import "lib/webinterface/fragments/macros.tpl" as macros%}
+{% block head_css %}{% include 'lib/webinterface/fragments/datatables_css.tpl' %}{% endblock %}
+
+{% block content %}
+            <div class="row">
+                <div class="col-lg-12">
+                    <h1 class="page-header">NEST Thermostat Tools</h1>
+                </div>
+                <!-- /.col-lg-12 -->
+            </div>
+            <!-- /.row -->
+				<div class="row">
+					<div class="col-lg-12">
+						<div class="panel panel-default">
+
+							<div class="panel-heading">
+								<h4>
+                                <div style="float: right;">
+                                    <a href="#" data-toggle="modal" data-target="#nestinfo"><i class="fa fa-question-circle fa-2x"></i></a>
+                                </div>NEST Thermostats </h4>
+							</div>
+							<div class="panel-body">
+                                {{ macros.modal("nestinfo", 'Find NEST Thermostats', "
+                                <p>
+                                    Find the NEST thermostat you would like to add to the system and click on 'Add NEST'.
+									If this is not available, the NEST thermostat is already configured.
+                                </p>") }}
+{% if results.devices|length == 0 %}
+								No devices under your account. Check your <a href="https://home.nest.com/" target="_blank">NEST.com Account</a>.
+{% else %}
+							   <div class="dataTable_wrapper">
+									<table width="100%" class="table table-striped table-bordered table-hover" id="dataTables-example">
+										<thead>
+											<tr>
+												<th>Name</th><th>Location</th><th>Inside temp / Mode</th><th>Serial Number</th><th>Actions</th>
+											</tr>
+										</thead>
+										<tbody>{% for nest in results.devices %}
+											 <tr>
+												 <td>{{ nest.name }}</td>
+												 <td>{{ nest.location }}</td>
+												 <td>{{nest.shared.current_temperature|display_temperature('c', 2,)}}°, {{nest.device.current_schedule_mode }}, {{ nest.device.fan_current_speed }}</td>
+												 <td>{{ nest.serial }}</td>
+												 <td>
+													 <form action="/devices/add/{{nest_device_type.device_type_id}}" method="post">
+												 		<input type="hidden" name="vars" value="{{ nest_device_type.device_type_id }}">
+												 		<input type="hidden" name="json_output" value='{{ nest.json_output }}'>
+													 	<button type="submit" class="btn btn-primary col-xs-12">Add NEST</button>
+											 		</form>
+												 </td>
+											 </tr>
+											 {% endfor %}
+										</tbody>
+									</table>
+								</div>
+{% endif %}
+							</div>
+						</div>
+					</div>
+					<!-- /.col-lg-6 -->
+				</div>
+	            <!-- /.row -->
+
+{% endblock %}
+
+{% block body_bottom_js %}{% include 'lib/webinterface/fragments/datatables_js.tpl' %}{% endblock %}
+
+

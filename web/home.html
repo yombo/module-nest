@@ -1,0 +1,81 @@
+{% extends "lib/webinterface/fragments/layout.tpl" %}
+{% import "lib/webinterface/fragments/macros.tpl" as macros%}
+{% block head_css %}
+{% include 'lib/webinterface/fragments/select_css.tpl' %}
+{% endblock %}
+
+{% block content %}
+            <div class="row">
+                <div class="col-lg-12">
+                    <h1 class="page-header">NEST Thermostat Tools</h1>
+                </div>
+                <!-- /.col-lg-12 -->
+            </div>
+            <!-- /.row -->
+            <form id="toolsnest" method="POST" role="form">
+				<div class="row">
+					<div class="col-lg-7 col-md-8">
+						<div class="panel panel-default">
+
+							<div class="panel-heading">
+								<h4>
+                                <div style="float: right;">
+                                    <a href="#" data-toggle="modal" data-target="#nestinfo"><i class="fa fa-question-circle fa-2x"></i></a>
+                                </div>Find NEST Thermostats </h4>
+							</div>
+							<div class="panel-body">
+                                {{ macros.modal("nestinfo", 'Find NEST Thermostats', '
+                                <p>
+                                    This tools allows you to find NEST Thermostats connected to your account. Once you find
+                                    the desired thermostat to control, click on "Add NEST". If "Add NEST" is not available,
+								    the NEST thermostat is already configured.
+								  <div class="bs-callout bs-callout-primary" id=callout-images-ie-rounded-corners>
+									  <h4>It\'s safe</h4>
+									  <p>
+									  The username and password submitted are sent to the Yombo Gateway, the gateway directly
+								      interacts with NEST.Com to request NEST thermostats in your account.
+								      </p>
+									  <p>
+									  This information is not saved anywhere and is not sent the Yombo Servers.
+									  </p>
+								  </div>
+                                </p>') }}
+								<div class="form-group">
+									<label for="topic">Username</label>
+									<div class="input-group">
+										<input type="text" class="form-control" name="username" id="username" placeholder="name@example.com" required value="{{ session.module_nest_username }}">
+										<span class="input-group-addon danger"><span class="glyphicon glyphicon-remove"></span></span>
+									</div>
+								</div>
+								<div class="form-group">
+									<label for="message">Password</label>
+									<div class="input-group">
+										<input type="password" class="form-control" name="password" id="password" placeholder="" required value="{{ session.module_nest_password }}">
+										<span class="input-group-addon danger"><span class="glyphicon glyphicon-remove"></span></span>
+									</div>
+								</div>
+								<button type="submit" class="btn btn-primary col-xs-12" disabled>Find NEST Thermostats</button>
+							</div>
+						</div>
+					</div>
+					<!-- /.col-lg-6 -->
+				</div>
+	            <!-- /.row -->
+			</form>
+
+{% endblock %}
+
+
+{% block body_bottom %}
+{% include 'lib/webinterface/fragments/select_js.tpl' %}
+
+<script>
+    $('.ls-modal').on('click', function(e){
+      e.preventDefault();
+      $('#myModal').modal('show').find('.modal-body').load($(this).attr('href'));
+    });
+
+</script>
+
+{% endblock %}
+

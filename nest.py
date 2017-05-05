@@ -1,5 +1,5 @@
 """
-Provide support for nest thermostats.
+Provide suppot for NEST devices.
 
 License
 =======
@@ -14,22 +14,25 @@ or FITNESS FOR A PARTICULAR PURPOSE.
 :copyright: Copyright 2016 by Yombo.
 """
 # Import python libraries
-import treq
+import yombo.ext.treq as treq
 try:  # Prefer simplejson if installed, otherwise json will work swell.
     import simplejson as json
 except ImportError:
     import json
 import math
+from hashlib import sha256
+from dateutil import parser as duparser
+import time
 
 # Import twisted libraries
 from twisted.internet.defer import inlineCallbacks, returnValue
-from twisted.internet import reactor
-from twisted.internet.protocol import Protocol
-from twisted.internet.serialport import SerialPort
 from twisted.internet.task import LoopingCall
+from twisted.internet import reactor
 
+from yombo.core.exceptions import YomboWarning
 from yombo.core.log import get_logger
 from yombo.core.module import YomboModule
+from yombo.lib.webinterface.auth import require_auth
 from yombo.utils import unit_converters
 
 logger = get_logger("modules.nest")
@@ -47,17 +50,17 @@ class Nest(YomboModule):
         # self.password = self._ModuleVariables['password'][0]['value']
 
         self.devices = {}
-        self.tempurature_display = self.set('misc', 'tempurature_display', 'f')
+        self.tempurature_display = self._Configs.get2('misc', 'tempurature_display', 'f')
         self.pending_requests = {}  # track pending requests here.
 
-        devices = self._GetDevices()
-        for device_id, device in devices.iteritems():
-            results = yield self.nest_login(device)  # todo: convert access token storage to SQLDict for caching
-            if results is not True:
-                logger.warn("NEST Module is unable to get information for nest thermostat. Nest ID: {id} Reason: {reason}",
-                            id=device.device_variables['nest_id'][0]['value'],
-                            reason=results)
-                del self.devices[device_id]
+        self.nest_transport = None
+        self.nest_access_token = None
+
+        self.nest_user_agent = "Nest/2.1.3 CFNetwork/548.0.4"
+        self.nest_protocol_version = "1"
+
+        self.nest_device_type = self._DeviceTypes['nest_thermostat']
+        self.nest_accounts  = yield self._SQLDict.get(self, "nestaccounts")  # store transports and access tokens here.
 
     def _start_(self):
         """
@@ -77,13 +80,6 @@ class Nest(YomboModule):
         """
         return ['nest_thermostat']
 
-    def _statistics_lifetimes_(self, **kwargs):
-        """
-        We keep 10 days of max data, 30 days of hourly data, 1 of daily data
-        """
-        return {'lib.atoms.#': {'full':10, '5m':30, '15m':30, '60m':0} }
-        # we don't keep 6h averages.
-
     def _configuration_set_(self, **kwargs):
         """
         Receive configuruation updates and adjust as needed.
@@ -99,26 +95,231 @@ class Nest(YomboModule):
             if option == 'temp_display':
                 self.temp_display = value
 
+    def _webinterface_add_routes_(self, **kwargs):
+        """
+        Adds a configuration block to the web interface. This allows users to view their nest account for
+        thermostat ID's which they can copy to the device setup page.
+        :param kwargs:
+        :return:
+        """
+        #        if self.loadedLibraries['atoms']['loader.operation_mode'] = val
+        return {
+            'nav_side': [
+                {
+                    'label1': 'Tools',
+                    'label2': 'NEST',
+                    'priority1': None,  # Even with a value, 'Tools' is already defined and will be ignored.
+                    'priority2': 5000,
+                    'icon': 'fa fa-thermometer-three-quarters fa-fw',
+                    'url': '/tools/module_nest',
+                    'tooltip': '',
+                    'opmode': 'run',
+                },
+            ],
+            'routes': [
+                self.web_interface_routes,
+            ],
+        }
+
+    def web_interface_routes(self, webapp):
+        """
+        Adds routes to the webinterface module.
+
+        :param webapp: A pointer to the webapp, it's used to setup routes.
+        :return:
+        """
+        with webapp.subroute("/") as webapp:
+            @webapp.route("/tools/module_nest", methods=['GET'])
+            @require_auth()
+            @inlineCallbacks
+            def page_tools_module_nest_get(webinterface, request, session):
+
+                if 'module_nest_password' in session:
+                    password = yield self._GPG.decrypt(session['module_nest_password'])
+                else:
+                    password = ""
+                page = webinterface.webapp.templates.get_template('modules/nest/web/home.html')
+                returnValue(page.render(alerts=webinterface.get_alerts(),
+                                   session=session,
+                                   password=password,
+                                   ))
+
+            @webapp.route('/tools/module_nest', methods=['POST'])
+            @require_auth()
+            @inlineCallbacks
+            def page_tools_module_nest_post(webinterface, request, session):
+                # print "in nest post..."
+
+                try:
+                    session['module_nest_username'] = request.args.get('username')[0]
+                    password = request.args.get('password')[0]
+                    session['module_nest_password'] = yield self._GPG.encrypt(request.args.get('password')[0])
+                    reactor.callLater(600, self.clean_session_data, session)
+                except Exception, e:
+                    webinterface.add_alert('Invalid form request. Try again.', 'warning')
+                    page = webinterface.webapp.templates.get_template('modules/nest/web/home.html')
+                    returnValue(page.render(alerts=webinterface.get_alerts(),
+                                            session=session,
+                                            password=password,
+                                            ))
+
+                try:
+                    results = yield self.tools_list_nest_devices(session['module_nest_username'], password)
+                    # print "nest results: %s" % results
+                    for i, device in enumerate(results['devices']):
+                        print "i: %s" % i
+                        # print "device: %s" % device
+                        results['devices'][i]['json_output'] =  json.dumps({
+                            'device_id': '',
+                            'label': device['name'],
+                            'description': device['name'],
+                            'statistic_label': "myhouse." + device['location'].lower() + "." + device['name'].lower(),
+                            'statistic_lifetime': 0,
+                            'device_type_id': self.nest_device_type['device_type_id'],
+                            'pin_code': "",
+                            'pin_timeout': 0,
+                            'energy_type': "electric",
+                            'vars': [
+                            ],
+                            # 'variable_data': json_output['vars'],
+                        })
+
+                    # print "nest results: %s" % results
+
+                except Exception, e:
+                    webinterface.add_alert('Error with NEST module: %s' % e, 'warning')
+                    page = webinterface.webapp.templates.get_template('modules/nest/web/home.html')
+                    returnValue(page.render(alerts=webinterface.get_alerts(),
+                                            session=session,
+                                            password=password,
+                                            ))
+
+                if results['status'] == 'failed':
+                    webinterface.add_alert('%s' % results['msg'], 'warning')
+                    page = webinterface.webapp.templates.get_template('modules/nest/web/home.html')
+                    returnValue(page.render(alerts=webinterface.get_alerts(),
+                                            session=session,
+                                            password=password,
+                                            ))
+
+                # print "nest results: %s" % results
+                page = webinterface.webapp.templates.get_template(str('modules/nest/web/show_account_serials.html'))
+                returnValue(page.render(alerts=webinterface.get_alerts(),
+                                        results=results,
+                                        nest_device_type=self.nest_device_type
+                                        ))
+
+    def clean_session_data(self, session):
+        """
+        Remove any items stored in the session.
+        
+        :param session: 
+        :return: 
+        """
+        if 'module_nest_username' in session:
+            del session['module_nest_username']
+        if 'module_nest_password' in session:
+            del session['module_nest_password']
+
+
     @inlineCallbacks
-    def nest_login(self, device):
-        username = device.device_variables['username'][0]['value']
-        password = device.device_variables['password'][0]['value']
+    def tools_list_nest_devices(self, username, password):
+
+        try:
+            nest_account = yield self.get_nest_account(username, password)
+        except YomboWarning as e:
+            results = {
+                'status': 'failed',
+                'msg': e.message,
+            }
+            returnValue(results)
+
+        transport = nest_account['urls']['transport_url']
+        access_token = nest_account['access_token']
+        userid = nest_account['userid']
+
+        # print "Collecting NEST thermostats..."
+        response = yield treq.get(transport + "/v2/mobile/user." + userid,
+                            headers={"user-agent": self.nest_user_agent,
+                                       "Authorization":"Basic " + access_token,
+                                       "X-nl-user-id": userid,
+                                       "X-nl-protocol-version": self.nest_protocol_version}
+                            )
+        content = yield treq.content(response)
+        content = json.loads(content)  # convert from json to dictionary
+
+        where_ids = {}
+        for item_id, item in content['where'].iteritems():
+            for where in item['wheres']:
+                # print "where: %s" % where
+                where_ids[where['where_id']] = where['name']
+
+        devices = []
+        # print content
+        shared = content['shared']
+        device = content['device']
+        if len(shared):
+            for serial, data in shared.iteritems():
+                devices.append({
+                    'serial': serial,
+                    'name': data['name'],
+                    'location': where_ids[device[serial]['where_id']],
+                    'shared': data,
+                    'device': device[serial],
+                })
+                # print "Serial: %s     Name: %s" % (serial, data['name'])
+            results = {
+                'status': 'success',
+                'msg': "Devices found",
+                'devices': devices,
+            }
+        else:
+            results = {
+                'status': 'success',
+                'msg': "No devices found in your account.",
+                'devices': [],
+            }
+        returnValue(results)
+
+    @inlineCallbacks
+    def get_nest_account(self, username, password):
+        account_hash = sha256(username+password).hexdigest()
+        if account_hash in self.nest_accounts:
+            if self.nest_accounts[account_hash]['expires_in_epoch'] < time.time():
+                returnValue(self.nest_accounts[account_hash])
+            else:
+                del self.nest_accounts[account_hash]
 
         response = yield treq.post("https://home.nest.com/user/login",
-                                    {"username": username, "password": password},
-                                    headers={"user-agent":"Nest/1.1.0.10 CFNetwork/548.0.4"}
+                                   {"username": username, "password": password},
+                                   headers={"user-agent": self.nest_user_agent}
                                    )
 
         content = yield treq.content(response)
         content = json.loads(content)  # convert from json to dictionary
+        if 'error' in content:
+            raise YomboWarning("Error with NEST Account: %s" % content['error_description')
 
-        self.devices[device.device_id]['nest_number'] = device.device_variables['nest_number'][0]['value']
-        self.devices[device.device_id]['nest_serial'] = device.device_variables['nest_serial'][0]['value']
-        self.devices[device.device_id]['transport'] = content['urls']['transport_url']
-        self.devices[device.device_id]['access_token'] = content['access_token']
-        self.devices[device.device_id]['userid'] = content['userid']
-        self.devices[device.device_id]['statistics_label'] = device.device_variables['statistics_label'][0]['value']
-        returnValue(True)
+        content['expires_in_epoch'] = int(duparser.parse(content['expires_in']).strftime('%s'))
+        self.nest_accounts[account_hash] = content
+        returnValue(content)
+        # transport = content['urls']['transport_url']
+        # access_token = content['access_token']
+        # userid = content['userid']
+
+    @inlineCallbacks
+    def api_request(self, nest_account, method, url, data=None, headers=None):
+        request_url = nest_account['urls']['transport_url'] + url
+        response = yield treq.get(transport + "/v2/mobile/user." + userid,
+                            headers={"user-agent": self.nest_user_agent,
+                                       "Authorization":"Basic " + access_token,
+                                       "X-nl-user-id": userid,
+                                       "X-nl-protocol-version": self.nest_protocol_version}
+                            )
+        content = yield treq.content(response)
+        content = json.loads(content)  # convert from json to dictionary
+
+
 
     @inlineCallbacks
     def period_status(self):
@@ -217,13 +418,13 @@ class Nest(YomboModule):
         self._Statistics.datapoint(stats_label + ".fan_state", fan_state)  # on, off
         self._Statistics.datapoint(stats_label + ".mode", status['target_temperature_type'])  # cool, heat, off
 
-        if self.tempurature_display == 'f':
+        if self.tempurature_display() == 'f':
             set_temp = unit_converters['c_f'](status['target_temperature_type'])
         else:
             set_temp = status['target_temperature_type']
 
         device_status = {
-            'human_status': _('module.nest',"Thermostat is set to {mode}, is set to {set_temp}°{temp_scale}, and is currently {state}. The fan is {fan_state}.".format(
+            'human_status': _('module.nest',"Thermostat is set to {mode}, is set to {set_temp}{temp_scale}, and is currently {state}. The fan is {fan_state}.".format(
                 mode=_('common', status['target_temperature_type'].title()),
                 set_temp=_('common', set_temp),
                 temp_scale=_('common.temperatures', set_temp),

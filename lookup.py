@@ -31,9 +31,10 @@ def show_serials(username, password):
     print "Logging into nest..."
     response = yield treq.post("https://home.nest.com/user/login",
                                 {"username": username, "password": password},
-                                headers={"user-agent":"Nest/1.1.0.10 CFNetwork/548.0.4"}
+                                headers={"user-agent":"Nest/2.1.3 CFNetwork/548.0.4"}
                                )
     content = yield treq.content(response)
+    print "login: %s" % content
 
     content = json.loads(content)  # convert from json to dictionary
 
@@ -47,8 +48,8 @@ def show_serials(username, password):
     userid = content['userid']
 
     print "Collecting NEST thermostats..."
-    response = yield treq.get(transport + "/v2/mobile/user." + userid,
-                        headers={"user-agent":"Nest/1.1.0.10 CFNetwork/548.0.4",
+    response = yield treq.get(transport + "/v3/mobile/user." + userid,
+                        headers={"user-agent":"Nest/2.1.3 CFNetwork/548.0.4",
                                    "Authorization":"Basic " + access_token,
                                    "X-nl-user-id": userid,
                                    "X-nl-protocol-version": "1"}
@@ -56,12 +57,21 @@ def show_serials(username, password):
     content = yield treq.content(response)
     content = json.loads(content)  # convert from json to dictionary
 
+    # collect where ids
+    where_ids = {}
+    for item_id, item in content['where'].iteritems():
+        for where in item['wheres']:
+            # print "where: %s" % where
+            where_ids[where['where_id']] = where['name']
+
+    # print "wheres: %s" % where_ids
     # print content
     shared = content['shared']
+    device = content['device']
     print "\nEnter this desired serial string into the device configuration:"
     if len(shared):
         for serial, data in shared.iteritems():
-            print "Serial: %s     Name: %s" % (serial, data['name'])
+            print "Serial: %s   Name: %s  Location: %s" % (serial, data['name'], where_ids[device[serial]['where_id']])
     else:
         print "No devices found."
 

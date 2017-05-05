@@ -1,19 +1,27 @@
+Summary
+=======
+
+This module provides support for interacting with NEST thermostats to the Yombo gateway.
+
+Additional details about this module at: https://yombo.net/modules/nest/
+
+Learn about [Yombo Gateway](https://yombo.net/).
+
 Usage
 =====
 
-This module extends the capabilities of the `Yombo Gateway <https://yombo.net/>`_
-by adding support for NEST thermostats. For details, visit https://nest.com
-
-NEST Thermostats
-================
-
 This module provides support for interacting with NEST thermostats.
 
-Installation
-============
+Once installed, visit the web interface for the gateway. Then goto "Tools" -> "Nest" to find the NEST serial you wish to mangage.
 
-Simply mark this module as being used by the gateway, and the gateway will
-download and install this module automatically.
+After you find the serial number:
+
+1. Copy this into you clipboard (ctrl-c).
+2. Add a new device.
+3. Select NEST as the device type.
+4. In the device variables section, paste (ctrl-v) the NEST serial number where prompted.
+
+You can now control your NEST thermostate(s).
 
 Requirements
 ============
@@ -23,12 +31,9 @@ Must have a NEST device.
 License
 =======
 
-Feel free to use or copy under the MIT license. See the
-`MIT License <hhttps://opensource.org/licenses/MIT>`_ for more details.
+Feel free to use or copy under the MIT license. See the [MIT License](hhttps://opensource.org/licenses/MIT) for more details.
 
-The **`Yombo <https://yombo.net/>`_** team and other contributors
-hopes that it will be useful, but WITHOUT ANY WARRANTY; without even the
-implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+The [Yombo](https://yombo.net/) team and other contributors hopes that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 See details below.
 
