@@ -14,7 +14,6 @@ or FITNESS FOR A PARTICULAR PURPOSE.
 :copyright: Copyright 2016 by Yombo.
 """
 # Import python libraries
-import yombo.ext.treq as treq
 try:  # Prefer simplejson if installed, otherwise json will work swell.
     import simplejson as json
 except ImportError:
@@ -23,17 +22,21 @@ import math
 from hashlib import sha256
 from dateutil import parser as duparser
 import time
+import traceback
+
 
 # Import twisted libraries
 from twisted.internet.defer import inlineCallbacks, returnValue
 from twisted.internet.task import LoopingCall
 from twisted.internet import reactor
 
+import yombo.ext.treq as treq
 from yombo.core.exceptions import YomboWarning
 from yombo.core.log import get_logger
 from yombo.core.module import YomboModule
 from yombo.lib.webinterface.auth import require_auth
 from yombo.utils import unit_converters
+from yombo.utils.maxdict import MaxDict
 
 logger = get_logger("modules.nest")
 
@@ -73,7 +76,7 @@ class Nest(YomboModule):
 
         self.devices = {}
         self.tempurature_display = self._Configs.get2('misc', 'tempurature_display', 'f')
-        self.pending_requests = {}  # track pending requests here.
+        self.pending_requests = MaxDict(200)  # track pending requests here.
 
         self.nest_transport = None
         self.nest_access_token = None
@@ -132,7 +135,7 @@ class Nest(YomboModule):
                     'label1': 'Tools',
                     'label2': 'NEST',
                     'priority1': None,  # Even with a value, 'Tools' is already defined and will be ignored.
-                    'priority2': 5000,
+                    'priority2': 15000,
                     'icon': 'fa fa-thermometer-three-quarters fa-fw',
                     'url': '/tools/module_nest',
                     'tooltip': '',
@@ -191,26 +194,23 @@ class Nest(YomboModule):
                     # print "nest results: %s" % results
                     for i, device in enumerate(results['devices']):
                         # print "device: %s" % device
-                        print "!1111"
                         # variables = yield self._Variables.get_groups_fields(group_relation_type='device_type', group_relation_id=self.nest_device_type.device_type_id)
                         variables = {
                             'username': {
-                                'new_99': 'aaaa'
+                                'new_99': session['module_nest_username']
                             },
                             'password': {
-                                'new_99': 'bbbb'
+                                'new_99': session['module_nest_password']
                             },
                             'serial': {
-                                'new_99': 'cccc'
+                                'new_99': device['serial']
                             }
                         }
-                        print "!222"
                         # variables['username']['new_99'].append({'value':'asdfasdfasdfasdf'})
-                        print "!3333"
-                        print "variables: %s" % variables
                         results['devices'][i]['json_output'] =  json.dumps({
                             # 'device_id': '',
                             'label': device['name'],
+                            'machine_label': 'nest_' + device['name'].lower(),
                             'description': device['name'],
                             'statistic_label': "myhouse." + device['location'].lower() + "." + device['name'].lower(),
                             'statistic_lifetime': 0,
@@ -307,11 +307,14 @@ class Nest(YomboModule):
 
     @inlineCallbacks
     def get_thermostat_status(self, device_id):
+        # device =
+        device_variables = yield device.device_variables()
+
         device = self.device['device_id']
-        nest_account = self.nest_account(device.device_variables['username']['data'][0]['value'], device.device_variables['password']['data'][0]['value'])
+        nest_account = yield self.nest_account(device_variables['values'][0], device_variables['password']['values'][0])
         response = yield self.nest_api_request(nest_account, "get", "/v2/mobile/user." + nest_account['userid']),
 
-        device_serial = device.device_variables['serial']['data'][0]['value']
+        device_serial = device_variables['serial']['values'][0]
         # we have to map the nest serial to the structure, to get the correct structure information.
         structure_id = response['link'][device_serial]['structure'].split('.')[0]  # structure.xxxxxx...
 
@@ -353,26 +356,37 @@ class Nest(YomboModule):
 
     @inlineCallbacks
     def nest_api_request(self, nest_account, method, url, data=None, additional_headers=None):
+        print "nest account: %s" % nest_account
+        print "method: %s" % method
+        print "data: %s" % data
         request_url = nest_account['urls']['transport_url'] + url
+        print "request_url: %s" % request_url
         headers = {
             "user-agent": self.nest_user_agent,
             "X-nl-protocol-version": self.nest_protocol_version
         }
+        print "bbb3"
         if 'access_token' in nest_account:
             headers["Authorization"] = "Basic " + nest_account['access_token']
         if 'userid' in nest_account:
             headers["X-nl-user-id"] = nest_account['userid']
+        print "headers: %s" % headers
 
         if isinstance(additional_headers, dict):
             headers.update(additional_headers)
 
+        print "bbb 10"
+
         if method == 'get':
             response = yield treq.get(request_url, headers=headers)
         if method == 'post':
-            response = yield treq.post(request_url, headers=headers)
+            print "data: %s" % json.dumps(data)
+            response = yield treq.post(request_url, headers=headers,  data=json.dumps(data))
+
+        print "bbb 15 response code: %s" % response.code
 
         content = yield treq.content(response)
-        print "about to decode json..."
+        print "about to decode json... '%s'" % content
         content = json.loads(content)  # convert from json to dictionary
         print "about to decode json...done"
         if 'error' in content:
@@ -539,53 +553,58 @@ class Nest(YomboModule):
         :param kwags: Contains 'device' and 'command'.
         :return: None
         """
-        logger.info("NEST received device_command: {kwargs}", kwargs=kwargs)
-        device = kwargs['device']
-        request_id = kwargs['request_id']
-        self.pending_requests[request_id] = kwargs
-        self.pending_requests[request_id]['nest_running'] = True
+        # logger.debug("NEST received device_command: {kwargs}", kwargs=kwargs)
+        try:
+            device = kwargs['device']
 
-        command = kwargs['command']
+            if self._is_my_device(device) is False:
+                logger.debug("NEST module cannot handle device_type_id: {device_type_id}", device_type_id=device.device_type_id)
+                returnValue(None)
 
-        logger.info("Testing if Nest module has information for device_id: {device_id}",
-                device_id=device.device_id)
-        if device.device_id not in self.devices:
-            logger.info("Skipping _device_command_ call since '{device_id}' isn't valid.",
-                    device_id=device.device_id)
-            returnValue()  # not meant for us.
+            request_id = kwargs['request_id']
 
-        device.device_command_received(request_id, message=_('module.nest', 'Handled by NEST module.'))
-        self.pending_requests[request_id]['nest_pending_callback'] = \
-            reactor.callLater(1, self.device_command_send_pending, request_id)
+            command = kwargs['command']
 
-        results = {}
-        if command.machine_label in ('cool', 'heat', 'off'):
-            device.command_pending(request_id)
-            results = yield self.set_mode(device.device_id, command.machine_label, request_id)
-        elif command.machine_label == 'set_temp':
-            if 'target_temp' not in kwargs:
-                logger.warn("NEST Requires 'target_temp' in kwargs of do_command request.")
+
+            self.pending_requests[request_id] = kwargs
+            self.pending_requests[request_id]['nest_running'] = True
+
+            device.device_command_received(request_id, message=_('module.nest', 'Handled by NEST module.'))
+            self.pending_requests[request_id]['nest_pending_callback'] = \
+                reactor.callLater(1, self.device_command_send_pending, request_id)
+
+            results = {}
+            if command.machine_label in ('cool', 'heat', 'off'):
+                results = yield self.set_mode(device, command, request_id)
+            elif command.machine_label == 'set_temp':
+                if 'target_temp' not in kwargs:
+                    logger.warn("NEST Requires 'target_temp' in kwargs of do_command request.")
+                    self.device_command_cancel(request_id)
+                else:
+                    results = yield self.set_temp(device.device_id, kwargs['target_temp'], request_id)
+            else:
+                logger.warn("NEST received unknown command: {command}", command=command.machine_label)
                 self.device_command_cancel(request_id)
-            else:
-                device.command_pending(request_id)
-                results = yield self.set_temp(device.device_id, kwargs['target_temp'], request_id)
-        else:
-            logger.warn("NEST received unknown command: {command}", command=command.machine_label)
-            self.device_command_cancel(request_id)
 
-        if self.pending_requests[request_id]['nest_running'] is True:
-            status = yield self.get_thermostat_status(device.device_id)
+            if self.pending_requests[request_id]['nest_running'] is True:
+                status = yield self.get_thermostat_status(device.device_id)
 
-        if self.pending_requests[request_id]['nest_running'] is True:
-            if status is not False:
-                self.save_status(device.device_id, status)
-                device.command_done(request_id)
-            else:
-                device.command_failed(request_id, message=_('module.nest', "NEST timed out, check network connection."))
+            if self.pending_requests[request_id]['nest_running'] is True:
+                if status is not False:
+                    self.save_status(device.device_id, status)
+                    device.command_done(request_id)
+                else:
+                    device.command_failed(request_id, message=_('module.nest', "NEST timed out, check network connection."))
 
-        if self.pending_requests[request_id]['nest_pending_callback'].active():
-            self.pending_requests[request_id]['nest_pending_callback'].cancel()
-        del self.pending_requests[request_id]
+            if self.pending_requests[request_id]['nest_pending_callback'].active():
+                self.pending_requests[request_id]['nest_pending_callback'].cancel()
+            del self.pending_requests[request_id]
+        except Exception as e:
+            print "eeeeeeeeeeeeeeeeeeeeeeeeeeee %s" % e
+            logger.error("---------------==(Traceback)==--------------------------")
+            logger.error("{trace}", trace=traceback.format_exc())
+            logger.error("--------------------------------------------------------")
+            logger.warn("Had trouble processing device_command: {e}", e=e)
 
     @inlineCallbacks
     def api_post(self, device_id, type, data):
@@ -618,8 +637,20 @@ class Nest(YomboModule):
         response = yield self.api_post(device_id, 'device', request_data)
 
     @inlineCallbacks
-    def set_mode(self, device_id, state):
+    def set_mode(self, device, command, request_id):
+        data = {
+            "target_change_pending": True,
+            'target_temperature_type': command.machine_label.lower()
+        }
+        print "aaaa"
+        device_variables = yield device.device_variables()
+        print "aaaa 1"
+        nest_account = yield self.nest_account(device_variables['username']['values'][0], device_variables['password']['values'][0])
+        print "aaaa 2"
+        response = yield self.nest_api_request(nest_account, "post", "/v2/put/shared." + device_variables['serial']['values'][0], data)
+        print "aaaa 3"
 
-        request_data = '{"target_temperature_type":"' + str(state) + '"}'
-        response = yield self.api_post(device_id, 'shared', request_data)
+        print "nest set_mode respinse: %s" % response
+        # request_data = '{"target_temperature_type":"' + str(state) + '"}'
+        # response = yield self.api_post(device.device_id, 'shared', request_data)
 
