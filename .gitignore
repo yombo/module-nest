@@ -1,0 +1,17 @@
+# Python Stuff #
+################
+*.pyc
+*.pyo
+*~
+*.lock
+*.swp
+*.DS_Store
+
+# Yombo #
+#########
+.freeze
+
+# Logs and Databases #
+######################
+*.log
+*.out

@@ -40,7 +40,7 @@
 											 <tr>
 												 <td>{{ nest.name }}</td>
 												 <td>{{ nest.location }}</td>
-												 <td>{{nest.shared.current_temperature|display_temperature('c', 2,)}}°, {{nest.device.current_schedule_mode }}, {{ nest.device.fan_current_speed }}</td>
+												 <td>{% set temperature = nest.shared.current_temperature|display_temperature(out_decimals=2) %} {{temperature.value}}°{{temperature.type}}  {{nest.shared.current_temperature|display_temperature(out_decimals=2, include_type=True)}}, {{nest.device.current_schedule_mode }}, {{ nest.device.fan_current_speed }}</td>
 												 <td>{{ nest.serial }}</td>
 												 <td>
 													 <form action="/devices/add/{{nest_device_type.device_type_id}}" method="post">

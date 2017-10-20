@@ -3,9 +3,10 @@ Summary
 
 This module provides support for interacting with NEST thermostats to the Yombo gateway.
 
-Additional details about this module at: https://yombo.net/modules/nest/
+Additional details about this module at: https://docs.yombo.net/Modules/Nest
 
-Learn about [Yombo Gateway](https://yombo.net/).
+Learn about [Yombo Gateway](https://yombo.net/) or
+[Get started today](https://docs.yombo.net/Gateway/Quick_start)
 
 Usage
 =====
@@ -31,7 +32,7 @@ Must have a NEST device.
 License
 =======
 
-Feel free to use or copy under the MIT license. See the [MIT License](hhttps://opensource.org/licenses/MIT) for more details.
+Feel free to use or copy under the MIT license. See the [MIT License](https://opensource.org/licenses/MIT) for more details.
 
 The [Yombo](https://yombo.net/) team and other contributors hopes that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
