@@ -3,10 +3,10 @@ Summary
 
 This module provides support for interacting with NEST thermostats to the Yombo gateway.
 
-Additional details about this module at: https://docs.yombo.net/Modules/nest
+Additional details about this module at: https://yombo.net/Modules/nest
 
 Learn about [Yombo Gateway](https://yombo.net/) or
-[Get started today](https://docs.yombo.net/Gateway/Quick_start)
+[Get started today](https://yombo.net/Docs/Gateway/Quick_start)
 
 Usage
 =====
