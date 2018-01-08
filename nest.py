@@ -69,9 +69,6 @@ class Nest(YomboModule):
     """
     @inlineCallbacks
     def _init_(self, **kwargs):
-        # self.username = self._ModuleVariables['username'][0]['value']
-        # self.password = self._ModuleVariables['password'][0]['value']
-
         self.devices = {}
         self.temperature_display = self._Configs.get2('misc', 'temperature_display', 'f')
         self.pending_requests = MaxDict(200)  # track pending requests here.
@@ -84,7 +81,7 @@ class Nest(YomboModule):
         self.nest_protocol_version = "1"
 
         self.nest_device_type = self._DeviceTypes['nest_thermostat']
-        self.nest_accounts  = yield self._SQLDict.get(self, "nestaccounts")  # store transports and access tokens here.
+        self.nest_accounts = yield self._SQLDict.get(self, "nestaccounts")  # store transports and access tokens here.
 
     def _start_(self, **kwargs):
         """
@@ -315,7 +312,7 @@ class Nest(YomboModule):
     @inlineCallbacks
     def poll_thermostat(self, device_id):
         yombo_device = self.devices['device_id']
-        device_variables = yield yombo_device.device_variables()
+        device_variables = yombo_device.device_variables_cached
 
         nest_account = yield self.nest_account(device_variables['username']['values'][0], device_variables['password']['values'][0])
         device = yield self.nest_api_request(nest_account, "get", "/v2/mobile/user." + nest_account['userid'])
@@ -424,7 +421,7 @@ class Nest(YomboModule):
 
             if self._is_my_device(device) is False:
                 logger.debug("NEST module cannot handle device_type_id: {device_type_id}", device_type_id=device.device_type_id)
-                returnValue(None)
+                return None
 
             request_id = kwargs['request_id']
 
@@ -508,7 +505,7 @@ class Nest(YomboModule):
             'target_temperature_type': command.machine_label.lower()
         }
         print("aaaa")
-        device_variables = device.device_variables
+        device_variables = device.device_variables_cached
         print("aaaa 1")
         nest_account = yield self.nest_account(device_variables['username']['values'][0], device_variables['password']['values'][0])
         print("aaaa 2")

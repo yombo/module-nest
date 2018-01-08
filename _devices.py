@@ -7,9 +7,8 @@ STATUS_HOLDS_AUTO_AWAY = 'auto_away'
 
 class NEST_Thermostat(Climate):
     """
-    A generic light device.
+    Make a new nest device type.
     """
-
     SUB_PLATFORM = "nest"
 
     current_mode_map = {
@@ -18,12 +17,14 @@ class NEST_Thermostat(Climate):
         'OFF': 'off',
     }
 
-    def _init_(self):
+    def _init_(self, **kwargs):
+        super()._init_()
         self.add_status_extra_any(('name'))
-
-    def _start_(self):
         self._fan_list = ['on', 'auto']
         self.__device = None  # will be filled with data from the NEST API.
+
+    def _start_(self, **kwargs):
+        super()._start_()
 
     @property
     def device(self):
@@ -37,7 +38,7 @@ class NEST_Thermostat(Climate):
     def update_status(self):
         """
         Should be called whenever we get new device status update.
-        :return: 
+        :return:
         """
         status = self.__device['status']
         shared = self.__device['shared']
